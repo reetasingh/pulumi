@@ -14,6 +14,10 @@
   `PULUMI_CONFIG`, `PULUMI_NODEJS_PROJECT`, and `PULUMI_NODEJS_STACK` environment variables to control settings
   the CLI would have otherwise managed for you.
 
+### Improvements
+
+- Add ability to enumerate resource outputs from state snapshot of arbitrary stacks.
+
 ## 0.17.6 (Released April 11, 2019)
 
 ### Improvements
