@@ -52,3 +52,9 @@ func GetAnalyzeResourceFailureError(urn resource.URN) *Diag {
 func GetPreviewFailedError(urn resource.URN) *Diag {
 	return newError(urn, 2005, "Preview failed: %v")
 }
+
+func GetDuplicateResourceAliasError(urn resource.URN) *Diag {
+	return newError(urn, 2006,
+		"Duplicate resource alias '%v' applied to resource with URN '%v' conflicting with resource with URN '%v'",
+	)
+}
