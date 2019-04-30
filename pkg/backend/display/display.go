@@ -43,10 +43,16 @@ func ShowEvents(
 	op string, action apitype.UpdateKind, stack tokens.QName, proj tokens.PackageName,
 	events <-chan engine.Event, done chan<- bool, opts Options, isPreview bool) {
 
-	if opts.DiffDisplay {
+	switch opts.DisplayType {
+	case DisplayDiff:
 		ShowDiffEvents(op, action, events, done, opts)
-	} else {
+	case DisplayProgress:
 		ShowProgressEvents(op, action, stack, proj, events, done, opts, isPreview)
+	case DisplayQuery:
+		contract.Failf("DisplayQuery can only be used in query mode, which should be invoked " +
+			"directly instead of through ShowEvents")
+	default:
+		contract.Failf("Unknown display type %d", opts.DisplayType)
 	}
 }
 
@@ -57,6 +63,55 @@ func (s *nopSpinner) Tick() {
 }
 
 func (s *nopSpinner) Reset() {
+}
+
+// ShowQueryEvents displays the engine events with the diff view.
+func ShowQueryEvents(op string, events <-chan engine.Event,
+	done chan<- bool, opts Options) {
+
+	prefix := fmt.Sprintf("%s%s...", cmdutil.EmojiOr("✨ ", "@ "), op)
+
+	var spinner cmdutil.Spinner
+	var ticker *time.Ticker
+
+	if opts.IsInteractive {
+		spinner, ticker = cmdutil.NewSpinnerAndTicker(prefix, nil, 8 /*timesPerSecond*/)
+	} else {
+		spinner = &nopSpinner{}
+		ticker = time.NewTicker(math.MaxInt64)
+	}
+
+	defer func() {
+		spinner.Reset()
+		ticker.Stop()
+		close(done)
+	}()
+
+	for {
+		select {
+		case <-ticker.C:
+			spinner.Tick()
+		case event := <-events:
+			spinner.Reset()
+
+			out := os.Stdout
+			if event.Type == engine.DiagEvent {
+				payload := event.Payload.(engine.DiagEventPayload)
+				if payload.Severity == diag.Error || payload.Severity == diag.Warning {
+					out = os.Stderr
+				}
+			}
+
+			msg := renderQueryEvent(event, opts)
+			if msg != "" && out != nil {
+				fprintIgnoreError(out, msg)
+			}
+
+			if event.Type == engine.CancelEvent {
+				return
+			}
+		}
+	}
 }
 
 // ShowDiffEvents displays the engine events with the diff view.
@@ -107,6 +162,45 @@ func ShowDiffEvents(op string, action apitype.UpdateKind,
 				return
 			}
 		}
+	}
+}
+
+func renderQueryEvent(event engine.Event, opts Options) string {
+
+	switch event.Type {
+	case engine.CancelEvent, engine.PreludeEvent, engine.SummaryEvent:
+		return ""
+
+	// 	// Currently, prelude, summar, and stdout events are printed the same for both the diff and
+	// 	// progress displays.
+	// case engine.PreludeEvent:
+	// 	return renderPreludeEvent(event.Payload.(engine.PreludeEventPayload), opts)
+	// case engine.SummaryEvent:
+	// 	return renderSummaryEvent(action, event.Payload.(engine.SummaryEventPayload), opts)
+	case engine.StdoutColorEvent:
+		return renderStdoutColorEvent(event.Payload.(engine.StdoutEventPayload), opts)
+
+	// 	// Resource operations have very specific displays for either diff or progress displays.
+	// 	// These functions should not be directly used by the progress display without validating
+	// 	// that the display is appropriate for both.
+	// case engine.ResourceOperationFailed:
+	// 	return renderDiffResourceOperationFailedEvent(event.Payload.(engine.ResourceOperationFailedPayload), opts)
+	// case engine.ResourceOutputsEvent:
+	// 	return renderDiffResourceOutputsEvent(event.Payload.(engine.ResourceOutputsEventPayload), seen, opts)
+	// case engine.ResourcePreEvent:
+	// 	return renderDiffResourcePreEvent(event.Payload.(engine.ResourcePreEventPayload), seen, opts)
+
+	// Includes stdout of the query process.
+	case engine.DiagEvent:
+		return renderDiffDiagEvent(event.Payload.(engine.DiagEventPayload), opts)
+
+	case engine.ResourceOperationFailed, engine.ResourceOutputsEvent, engine.ResourcePreEvent:
+		contract.Failf("query mode does not support resource operations")
+		return ""
+
+	default:
+		contract.Failf("unknown event type '%s'", event.Type)
+		return ""
 	}
 }
 
